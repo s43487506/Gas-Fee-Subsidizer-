@@ -8,12 +8,16 @@
 (define-constant err-contract-paused (err u105))
 (define-constant err-user-already-registered (err u106))
 (define-constant err-insufficient-subsidy-pool (err u107))
+(define-constant err-insufficient-credits (err u108))
+(define-constant err-transfer-failed (err u109))
 
 (define-data-var contract-paused bool false)
 (define-data-var total-subsidized uint u0)
 (define-data-var subsidy-pool uint u0)
 (define-data-var default-daily-limit uint u1000000)
 (define-data-var max-single-subsidy uint u500000)
+(define-data-var total-credits-minted uint u0)
+(define-data-var total-credits-redeemed uint u0)
 
 (define-map user-profiles
   { user: principal }
@@ -36,7 +40,24 @@
   }
 )
 
+(define-map subsidy-credits
+  { holder: principal }
+  { balance: uint }
+)
+
+(define-map credit-transactions
+  { credit-tx-id: uint }
+  {
+    from: principal,
+    to: principal,
+    amount: uint,
+    tx-type: (string-ascii 20),
+    stacks-block-height: uint
+  }
+)
+
 (define-data-var next-tx-id uint u1)
+(define-data-var next-credit-tx-id uint u1)
 
 (define-read-only (get-contract-info)
   {
@@ -287,4 +308,154 @@
     (map-delete user-profiles { user: user })
     (ok true)
   )
+)
+
+(define-read-only (get-credit-balance (holder principal))
+  (default-to u0 (get balance (map-get? subsidy-credits { holder: holder })))
+)
+
+(define-read-only (get-credit-transaction (credit-tx-id uint))
+  (map-get? credit-transactions { credit-tx-id: credit-tx-id })
+)
+
+(define-read-only (get-credits-info)
+  {
+    total-minted: (var-get total-credits-minted),
+    total-redeemed: (var-get total-credits-redeemed),
+    circulating: (- (var-get total-credits-minted) (var-get total-credits-redeemed))
+  }
+)
+
+(define-private (record-credit-transaction (from principal) (to principal) (amount uint) (tx-type (string-ascii 20)))
+  (let ((credit-tx-id (var-get next-credit-tx-id)))
+    (map-set credit-transactions
+      { credit-tx-id: credit-tx-id }
+      {
+        from: from,
+        to: to,
+        amount: amount,
+        tx-type: tx-type,
+        stacks-block-height: stacks-block-height
+      }
+    )
+    (var-set next-credit-tx-id (+ credit-tx-id u1))
+    credit-tx-id
+  )
+)
+
+(define-public (mint-credits (recipient principal) (amount uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (asserts! (> amount u0) err-invalid-amount)
+    (let (
+      (current-balance (get-credit-balance recipient))
+      (new-balance (+ current-balance amount))
+    )
+      (map-set subsidy-credits
+        { holder: recipient }
+        { balance: new-balance }
+      )
+      (var-set total-credits-minted (+ (var-get total-credits-minted) amount))
+      (record-credit-transaction contract-owner recipient amount "mint")
+      (ok new-balance)
+    )
+  )
+)
+
+(define-public (burn-credits (holder principal) (amount uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (asserts! (> amount u0) err-invalid-amount)
+    (let (
+      (current-balance (get-credit-balance holder))
+    )
+      (asserts! (>= current-balance amount) err-insufficient-credits)
+      (map-set subsidy-credits
+        { holder: holder }
+        { balance: (- current-balance amount) }
+      )
+      (var-set total-credits-redeemed (+ (var-get total-credits-redeemed) amount))
+      (record-credit-transaction holder contract-owner amount "burn")
+      (ok (- current-balance amount))
+    )
+  )
+)
+
+(define-public (transfer-credits (recipient principal) (amount uint))
+  (begin
+    (asserts! (> amount u0) err-invalid-amount)
+    (let (
+      (sender-balance (get-credit-balance tx-sender))
+      (recipient-balance (get-credit-balance recipient))
+    )
+      (asserts! (>= sender-balance amount) err-insufficient-credits)
+      (map-set subsidy-credits
+        { holder: tx-sender }
+        { balance: (- sender-balance amount) }
+      )
+      (map-set subsidy-credits
+        { holder: recipient }
+        { balance: (+ recipient-balance amount) }
+      )
+      (record-credit-transaction tx-sender recipient amount "transfer")
+      (ok amount)
+    )
+  )
+)
+
+(define-public (redeem-credits-for-subsidy (amount uint))
+  (begin
+    (asserts! (not (var-get contract-paused)) err-contract-paused)
+    (asserts! (> amount u0) err-invalid-amount)
+    (let (
+      (user-credits (get-credit-balance tx-sender))
+      (subsidy-amount (calculate-subsidy-amount amount))
+    )
+      (asserts! (>= user-credits subsidy-amount) err-insufficient-credits)
+      (asserts! (<= subsidy-amount (var-get subsidy-pool)) err-insufficient-subsidy-pool)
+      
+      (map-set subsidy-credits
+        { holder: tx-sender }
+        { balance: (- user-credits subsidy-amount) }
+      )
+      
+      (try! (as-contract (stx-transfer? subsidy-amount tx-sender tx-sender)))
+      
+      (var-set total-credits-redeemed (+ (var-get total-credits-redeemed) subsidy-amount))
+      (var-set subsidy-pool (- (var-get subsidy-pool) subsidy-amount))
+      (var-set total-subsidized (+ (var-get total-subsidized) subsidy-amount))
+      
+      (record-credit-transaction tx-sender contract-owner subsidy-amount "redeem")
+      (ok subsidy-amount)
+    )
+  )
+)
+
+(define-public (batch-mint-credits (recipients (list 20 principal)) (amounts (list 20 uint)))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (asserts! (is-eq (len recipients) (len amounts)) err-invalid-amount)
+    (let ((paired-data (zip-credits recipients amounts)))
+      (fold mint-credit-pair paired-data (ok (list)))
+    )
+  )
+)
+
+(define-private (mint-credit-pair (pair { recipient: principal, amount: uint }) (prev-result (response (list 20 uint) uint)))
+  (match prev-result
+    ok-list
+      (match (mint-credits (get recipient pair) (get amount pair))
+        ok-balance (ok (unwrap-panic (as-max-len? (append ok-list ok-balance) u20)))
+        err-val (err err-val)
+      )
+    err-val (err err-val)
+  )
+)
+
+(define-private (zip-credits (list-a (list 20 principal)) (list-b (list 20 uint)))
+  (map make-credit-pair list-a list-b)
+)
+
+(define-private (make-credit-pair (a principal) (b uint))
+  { recipient: a, amount: b }
 )

@@ -14,6 +14,8 @@ The Gas Fee Subsidizer is a Clarity smart contract that allows contract owners t
 - 📊 **Usage Tracking** - Monitor daily usage per user with automatic resets
 - 🛡️ **Safety Controls** - Emergency pause, limits, and admin-only functions
 - 📈 **Batch Processing** - Subsidize multiple users in a single transaction
+- 🎟️ **Subsidy Credits System** - Transferable pre-paid credits for flexible gas subsidization
+- 🔄 **Credit Transfers** - Users can send credits to others, enabling gifting and secondary markets
 
 ## 🔧 Contract Functions
 
@@ -30,6 +32,9 @@ The Gas Fee Subsidizer is a Clarity smart contract that allows contract owners t
 | `set-default-daily-limit` | ⚙️ Update default daily limit |
 | `set-max-single-subsidy` | 🎚️ Update maximum single subsidy amount |
 | `deregister-user` | ❌ Remove user from whitelist |
+| `mint-credits` | 🎟️ Create subsidy credits for a user |
+| `burn-credits` | 🔥 Remove credits from a user's balance |
+| `batch-mint-credits` | 📦 Mint credits for multiple users at once |
 
 ### Core Functions
 
@@ -37,6 +42,8 @@ The Gas Fee Subsidizer is a Clarity smart contract that allows contract owners t
 |----------|-------------|
 | `subsidize-gas-fee` | ⛽ Subsidize gas fee for a specific user |
 | `bulk-subsidize` | 📦 Subsidize multiple users at once |
+| `transfer-credits` | 💸 Transfer credits to another user |
+| `redeem-credits-for-subsidy` | 🎫 Redeem credits for gas subsidy |
 
 ### Read-Only Functions
 
@@ -48,6 +55,9 @@ The Gas Fee Subsidizer is a Clarity smart contract that allows contract owners t
 | `get-subsidization-record` | 📊 Get specific subsidization transaction |
 | `is-user-registered` | ✔️ Check if user is registered |
 | `get-subsidy-stats` | 📈 Get overall contract statistics |
+| `get-credit-balance` | 💰 Check credit balance for any user |
+| `get-credit-transaction` | 📜 Get specific credit transaction details |
+| `get-credits-info` | 📊 Get overall credits statistics |
 
 ## 🚀 Getting Started
 
@@ -104,7 +114,32 @@ clarinet test
 )
 ```
 
-### 4. Monitor Usage
+### 4. Use Subsidy Credits
+
+```clarity
+;; Mint credits for a user
+(contract-call? .Gas-fee-subsidizer mint-credits 'ST1HTBVD3JG9C05J7HBJTHGR0GGW7KXW28M5JS8QE u500000)
+
+;; Batch mint credits for multiple users
+(contract-call? .Gas-fee-subsidizer batch-mint-credits 
+  (list 'ST1HTBVD3JG9C05J7HBJTHGR0GGW7KXW28M5JS8QE 'ST2HTBVD3JG9C05J7HBJTHGR0GGW7KXW28M5JS8QE)
+  (list u300000 u200000)
+)
+
+;; Transfer credits to another user
+(contract-call? .Gas-fee-subsidizer transfer-credits 'ST2HTBVD3JG9C05J7HBJTHGR0GGW7KXW28M5JS8QE u100000)
+
+;; Redeem credits for gas subsidy
+(contract-call? .Gas-fee-subsidizer redeem-credits-for-subsidy u50000)
+
+;; Check credit balance
+(contract-call? .Gas-fee-subsidizer get-credit-balance 'ST1HTBVD3JG9C05J7HBJTHGR0GGW7KXW28M5JS8QE)
+
+;; Get credits info
+(contract-call? .Gas-fee-subsidizer get-credits-info)
+```
+
+### 5. Monitor Usage
 
 ```clarity
 ;; Check contract information
@@ -137,6 +172,8 @@ clarinet test
 | u105 | `err-contract-paused` | Contract is currently paused |
 | u106 | `err-user-already-registered` | User is already registered |
 | u107 | `err-insufficient-subsidy-pool` | Not enough STX in subsidy pool |
+| u108 | `err-insufficient-credits` | User has insufficient subsidy credits |
+| u109 | `err-transfer-failed` | Credit transfer failed |
 
 ## 🧪 Testing
 
