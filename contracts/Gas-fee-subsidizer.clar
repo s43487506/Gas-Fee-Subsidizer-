@@ -60,6 +60,18 @@
           (let ((last (get height (unwrap-panic entry))))
             (>= now (+ last cool))))))))
 
+(define-read-only (get-claim-availability (user principal))
+  (let ((paused? (var-get paused))
+        (amount (var-get subsidy-amount))
+        (entry (map-get? last-claim { user: user }))
+        (cool (var-get cooldown))
+        (now stacks-block-height)
+        (last (if (is-none entry) u0 (get height (unwrap-panic entry))))
+        (next (+ last cool))
+        (ready (and (not paused?) (not (is-eq amount u0)) (or (is-none entry) (>= now next))))
+        (available-at (if ready now next)))
+    (tuple (ready ready) (available-at available-at) (amount amount))))
+
 (define-public (claim)
   (let ((p tx-sender)
         (paused? (var-get paused))
