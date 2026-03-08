@@ -33,6 +33,11 @@
 (define-public (deposit (amount uint))
   (stx-transfer? amount tx-sender (as-contract contract-caller)))
 
+(define-public (withdraw (amount uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u100))
+    (as-contract (stx-transfer? amount (as-contract tx-sender) contract-owner))))
+
 (define-read-only (get-config)
   (tuple (amount (var-get subsidy-amount)) (cooldown (var-get cooldown)) (paused (var-get paused))))
 
